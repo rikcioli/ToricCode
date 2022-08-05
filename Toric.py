@@ -9,15 +9,35 @@ import numpy as np
 from math import pi
 from qiskit import QuantumCircuit, transpile, IBMQ
 from qiskit.providers.aer import AerSimulator, QasmSimulator
-from qiskit.providers.aer.noise import NoiseModel
+import qiskit.providers.aer.noise as noise
+from qiskit.circuit.library import QFT
+from qiskit.visualization import plot_histogram
+from qiskit.tools import job_monitor
 from IPython.display import display
 from lattice import Lattice
 import phases
 
-#IBMQ.load_account()
-#provider = IBMQ.get_provider(hub='ibm-q')
-#backend = provider.get_backend('ibmq_toronto')
-#noise_model = NoiseModel.from_backend(backend)
+IBMQ.load_account()
+provider = IBMQ.get_provider(hub='ibm-q')
+backend = provider.get_backend('ibm_nairobi')
+#noise_model = noise.NoiseModel.from_backend(backend)
+
+# Error probabilities
+prob_1 = 0.003  # 1-qubit gate
+prob_2 = 0.02   # 2-qubit gate
+prob_3 = 1 - ((1-prob_2)**13)*((1-prob_1)**12) # 3-qubit gate
+
+# Depolarizing quantum errors
+error_1 = noise.depolarizing_error(prob_1, 1)
+error_2 = noise.depolarizing_error(prob_2, 2)
+error_3 = noise.depolarizing_error(prob_3, 3)
+
+# Add errors to noise model
+noise_model = noise.NoiseModel()
+noise_model.add_all_qubit_quantum_error(error_1, ['rz', 'sx', 'x', 'h', 'z', 's', 'sdg'])
+noise_model.add_all_qubit_quantum_error(error_2, ['cx', 'cp'])
+noise_model.add_all_qubit_quantum_error(error_3, ['ccx'])
+print(noise_model)
 
 """
 IMPORTANT: the encoding between links of the lattice and qubits is, for Z4:
@@ -33,8 +53,8 @@ class ToricCode(Lattice):
         Lattice.__init__(self, size, pbc, spl)
         self.N_ancillas = ancillas
         self.N_qubits = 2*self.nlinks + self.N_ancillas
-        self.N_shots = 20000
-        self.circuit = QuantumCircuit(self.N_qubits, self.N_qubits)
+        self.N_shots = 2000
+        self.circuit = QuantumCircuit(self.N_qubits, ancillas)
         
     def qubits_from_links(self, link_list):
         """Returns the qubits associated to a given list of links"""
@@ -231,18 +251,22 @@ class ToricCode(Lattice):
             self.up_dyon_pow = low
     
 
-test = ToricCode((3,2), (True,True), 2, 1)
+test = ToricCode((3,2), (True,True), 2, 4)
 test.MagneticGS()
 ancilla = test.N_qubits-test.N_ancillas
-test.circuit.h(ancilla)
+reg_list = [ancilla, ancilla+1, ancilla+2, ancilla+3]
+test.circuit.h(reg_list)
 
 #Initialize e and m particles and rotate them
-"""
+
 test.Z_string((1,1), (2,1))
 test.X_string((1,0), (1,1), power = 1)
 test.X_string((2,0), (2,1), power = 1)
-test.Bp((0,0), power=3, control_qubit=ancilla)
-"""
+test.Bp((0,0), power=3, control_qubit=reg_list[0])
+test.Bp((0,0), power=6, control_qubit=reg_list[1])
+test.Bp((0,0), power=9, control_qubit=reg_list[2])
+test.Bp((0,0), power=9, control_qubit=reg_list[3])
+
 #Access non trivial sector and measure it with 't Hooft loop
 """
 test.Z_string((0,1), (3,1), power = 2)
@@ -250,20 +274,26 @@ test.X_string((1,0), (2,0), control_qubit=ancilla)
 test.X_string((1,1), (2,1), control_qubit=ancilla)
 """
 #Initialize dyons and exchange them an arbitrary number of times
-
+"""
 test.init_dyons(low_charges = (1,1), up_charges = (1,1))
 test.exchange_countclock(2, control_qubit = ancilla)
+"""
 
+test.circuit.append(QFT(4, inverse=True), [test.circuit.qubits[reg] for reg in reg_list])
+test.circuit.measure(reg_list, [0,1,2,3])
+qc_list = [test.circuit]
 
+"""
 circuit2 = test.circuit.copy()
 circuit2.sdg(ancilla)
 qc_list = [test.circuit, circuit2]
 for circuit in qc_list:
     circuit.h(ancilla)
     circuit.measure(ancilla, ancilla)
+"""
 
 #Draw the circuit and run it through the simulator with a given number of shots
-display(test.circuit.draw("mpl"))
+display(test.circuit.draw('mpl'))
 #simulator = QasmSimulator()
 simulator = AerSimulator(method = "statevector")
 tqc_list = transpile(qc_list, simulator)
@@ -275,22 +305,17 @@ print("\nTranspiled circuit depth:", tqc_list[0].depth())
 print("Transpiled circuit size:", tqc_list[0].size())
 print("Transpiled circuit width:", tqc_list[0].width())
 
-job = simulator.run(tqc_list, job_name = "Toric Test", shots = test.N_shots, memory = True)
+
+job = simulator.run(tqc_list, job_name = "Toric Test", shots = test.N_shots, memory = True, noise_model = noise_model)
+job_monitor(job)
 result = job.result()
+
+counts = result.get_counts()
+print("\nTotal counts are:", counts)
+display(plot_histogram(counts))
+
 print("\nRunning time {}s".format(result.time_taken))
 
-phase_list = phases.results(result, N_shots = test.N_shots, N_cos_circuits = 1, N_sin_circuits = 1)
-
-
-"""
-#Extract relative phase from the counts
-if sine_eval == True:
-    sin = evaluate_sin(counts)
-    print("\nSine of phase is:", sin)
-else:
-    phase = evaluate_phase(counts)
-    print("\nTotal phase is:", phase)
-"""
 
     
 
