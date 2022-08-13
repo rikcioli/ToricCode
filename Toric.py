@@ -318,7 +318,7 @@ print("Transpiled circuit size:", tqc_list[0].size())
 print("Transpiled circuit width:", tqc_list[0].width())
 
 
-job = simulator.run(tqc_list, job_name = "Toric Test", shots = test.N_shots, memory = True)
+job = simulator.run(tqc_list, job_name = "Toric Test", shots = test.N_shots, memory = True, noise_model = noise_model)
 job_monitor(job)
 result = job.result()
 

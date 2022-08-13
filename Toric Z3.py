@@ -260,10 +260,10 @@ class ToricCode(Lattice):
             self.up_dyon_pow = low
     
 
-test = ToricCode((3,2), (True,True), 2, 3)
+test = ToricCode((3,2), (True,True), 2, 4)
 test.MagneticGS()
 ancilla = test.N_qubits-test.N_ancillas
-reg_list = [ancilla, ancilla+1, ancilla+2]
+reg_list = [ancilla, ancilla+1, ancilla+2, ancilla+3]
 test.circuit.h(reg_list)
 
 #Initialize e and m particles and rotate them
@@ -274,7 +274,7 @@ test.X_string((2,0), (2,1), power = 1)
 test.Bp((0,0), power=2, control_qubit=reg_list[0])
 test.Bp((0,0), power=4, control_qubit=reg_list[1])
 test.Bp((0,0), power=8, control_qubit=reg_list[2])
-
+test.Bp((0,0), power=16, control_qubit=reg_list[3])
 
 #Access non trivial sector and measure it with 't Hooft loop
 """
@@ -290,8 +290,8 @@ test.exchange_countclock(2, control_qubit = ancilla)
 
 
 #test.circuit.h(reg_list)
-test.circuit.append(QFT(3, inverse=True), [test.circuit.qubits[reg] for reg in reg_list])
-test.circuit.measure(reg_list, [0,1,2])
+test.circuit.append(QFT(4, inverse=True), [test.circuit.qubits[reg] for reg in reg_list])
+test.circuit.measure(reg_list, [0,1,2,3])
 qc_list = [test.circuit]
 
 """
