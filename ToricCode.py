@@ -7,6 +7,7 @@ Created on Fri Apr 29 18:31:08 2022
 
 from math import pi, sqrt, acos
 from qiskit import QuantumCircuit
+import qiskit.extensions as ext
 from lattice import Lattice
 
 
@@ -20,28 +21,49 @@ Except for the ancilla, which is the qubit N° N_qubits-1
 
 class ToricCode(Lattice):
     
-    def __init__(self, size, pbc, spl, ancillas):
+    def __init__(self, size, pbc, spl, N_ancillas = 0):
         Lattice.__init__(self, size, pbc, spl)
-        self.N_ancillas = ancillas
+        self.N_ancillas = N_ancillas
         self.N_qubits = 2*self.nlinks + self.N_ancillas
-        self.circuit = QuantumCircuit(self.N_qubits, ancillas)
+        self.circuit = QuantumCircuit(self.N_qubits, N_ancillas)
+
         
     def qubits_from_links(self, link_list):
         """Returns the qubits associated to a given list of links"""
         qubit_list = [(2*link, 2*link+1) for link in link_list]
         return qubit_list
+    
+    def gates(self, noisy = True):
+        """Initialize noiseless gates to use in simulations"""
+        h_label = x_label = ry_label = ch_label = cx_label = ccx_label = None
+        if noisy is False:
+            x_label = 'X_nl'
+            h_label = 'H_nl'
+            ry_label = 'Ry_nl'
+            ch_label = 'CH_nl'
+            cx_label = ccx_label = 'nl'
+        gates = {
+            'x': ext.XGate(label = x_label),
+            'h': ext.HGate(label = h_label),
+            'ry': ext.RYGate(theta = 2*acos(1/sqrt(3)), label = ry_label),
+            'cx': ext.CXGate(label = cx_label),
+            'ch': ext.CHGate(label = ch_label),
+            'ccx': ext.CCXGate(label = ccx_label),
+            }
+        return gates
+        
 
     def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
-        pass
+        return
         
     def X(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
-        pass          
+        return         
             
-    def MagneticGS(self, qc = None):
-        pass                
+    def MagneticGS(self, qc = None, noisy = True):
+        return              
     
                     
-    def Z_string(self, site0, site1, power = 1, control_qubit = -1, circuit = None):        
+    def Z_string(self, site0, site1, power = 1, control_qubit = -1, qc = None, noisy = True):        
         if power%self.spl==0:
             return
         delta = site1[0] - site0[0] + site1[1] - site0[1]
@@ -54,9 +76,9 @@ class ToricCode(Lattice):
             power = self.spl - power%self.spl
         qubit_path = self.qubits_from_links(path)
         for qubit_pair in qubit_path:
-            self.Z(qubit_pair, power, control_qubit, circuit)    
+            self.Z(qubit_pair, power, control_qubit, qc, noisy)    
                     
-    def X_string(self, site0, site1, power = 1, control_qubit = -1, circuit = None):
+    def X_string(self, site0, site1, power = 1, control_qubit = -1, qc = None):
         if power%self.spl==0:
             return
         delta = site1[0] - site0[0] + site1[1] - site0[1]
@@ -69,9 +91,9 @@ class ToricCode(Lattice):
             power = self.spl - power%self.spl
         qubit_path = self.qubits_from_links(path)
         for qubit_pair in qubit_path:
-            self.X(qubit_pair, power, control_qubit, circuit)
+            self.X(qubit_pair, power, control_qubit, qc)
      
-    def Bp(self, site, power = 1, control_qubit = -1, circuit = None):   
+    def Bp(self, site, power = 1, control_qubit = -1, qc = None, noisy = True):   
         if type(power) is not int:
             raise RuntimeError("Plaquette raised to a non-integer power")
         x, y = site
@@ -80,7 +102,7 @@ class ToricCode(Lattice):
             return
         else:
             for i in range(4):
-                self.Z_string(sites[i], sites[(i+1)%4], power, control_qubit, circuit)
+                self.Z_string(sites[i], sites[(i+1)%4], power, control_qubit, qc, noisy)
         
     def init_dyons(self, low_charges = (1,1), up_charges = (1,1), **kwargs):
         """      
@@ -146,32 +168,33 @@ class ToricCode(Lattice):
 
 class Z3(ToricCode):
     
-    def __init__(self, size, pbc, ancillas):
-        ToricCode.__init__(self, size, pbc, 3, ancillas)
+    def __init__(self, size, pbc, N_ancillas):
+        ToricCode.__init__(self, size, pbc, 3, N_ancillas)
     
-    def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
+    def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None, noisy = True):
         if power%3 == 0:
             return
         if qc is None:
             qc = self.circuit
+        gates = self.gates(noisy)
         if control_qubit == -1:
             if power%3 == 1:
-                qc.x(qubit_pair[0])
-                qc.cx(qubit_pair[0], qubit_pair[1])
-                qc.cx(qubit_pair[1], qubit_pair[0])
+                qc.append(gates['x'], [qubit_pair[0]])
+                qc.append(gates['cx'], [qubit_pair[0], qubit_pair[1]])
+                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
             elif power%3 == 2:
-                qc.cx(qubit_pair[1], qubit_pair[0])
-                qc.cx(qubit_pair[0], qubit_pair[1])
-                qc.x(qubit_pair[0])
+                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['cx'], [qubit_pair[0], qubit_pair[1]])
+                qc.append(gates['x'], [qubit_pair[0]])
         else:
             if power%3 == 1:
-                qc.cx(control_qubit, qubit_pair[0])
-                qc.ccx(control_qubit, qubit_pair[0], qubit_pair[1])
-                qc.ccx(control_qubit, qubit_pair[1], qubit_pair[0])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[0], qubit_pair[1]])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
             elif power%3 == 2:
-                qc.ccx(control_qubit, qubit_pair[1], qubit_pair[0])
-                qc.ccx(control_qubit, qubit_pair[0], qubit_pair[1])
-                qc.cx(control_qubit, qubit_pair[0])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[0], qubit_pair[1]])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
     
     def X(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
         if power%3 == 0:
@@ -194,10 +217,10 @@ class Z3(ToricCode):
                 qc.cp(-2*pi/3, control_qubit, qubit_pair[1])
                 
                 
-    def MagneticGS(self, qc = None):
+    def MagneticGS(self, qc = None, noisy = True):
         if qc is None:
             qc = self.circuit
-        
+        gates = self.gates(noisy)
         #all rows in parallel, three steps, sequential in the columns
         for x in range(self.Lx - 1):
             for i in range(3):
@@ -214,20 +237,20 @@ class Z3(ToricCode):
                     
                     #if first step:
                     if i==0:    
-                        qc.ry(2*acos(1/sqrt(3)), fourier_pair[0])
-                        qc.ch(fourier_pair[0], fourier_pair[1])
-                        qc.x(fourier_pair[0])
+                        qc.append(gates['ry'], [fourier_pair[0]])
+                        qc.append(gates['ch'], [fourier_pair[0], fourier_pair[1]])
+                        qc.append(gates['x'], [fourier_pair[0]])
                         pair_index = 0
                     
                     pair = qubit_list[pair_index]
-                    qc.cx(fourier_pair[0], fourier_pair[1])
+                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
                     if pair_index < 2:
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[0])
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[1])
+                        self.Z(pair, power = 1, control_qubit = fourier_pair[0], noisy=noisy)
+                        self.Z(pair, power = 1, control_qubit = fourier_pair[1], noisy=noisy)
                     else:
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[1])
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[0])
-                    qc.cx(fourier_pair[0], fourier_pair[1])
+                        self.Z(pair, power = 2, control_qubit = fourier_pair[1], noisy=noisy)
+                        self.Z(pair, power = 2, control_qubit = fourier_pair[0], noisy=noisy)
+                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
                                           
         #last column from top to bottom, last plaquette excluded       
         x = self.Lx - 1
@@ -237,55 +260,56 @@ class Z3(ToricCode):
             fourier_pair = qubit_list[0]
             
             #fourier transform the lower link
-            qc.ry(2*acos(1/sqrt(3)), fourier_pair[0])
-            qc.ch(fourier_pair[0], fourier_pair[1])
-            qc.x(fourier_pair[0])
+            qc.append(gates['ry'], [fourier_pair[0]])
+            qc.append(gates['ch'], [fourier_pair[0], fourier_pair[1]])
+            qc.append(gates['x'], [fourier_pair[0]])
 
             for pair_index, pair in enumerate(qubit_list):
                 if pair_index > 0:
-                    qc.cx(fourier_pair[0], fourier_pair[1])
+                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
                     if pair_index < 2:
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[0])
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[1])
+                        self.Z(pair, power = 1, control_qubit = fourier_pair[0], noisy=noisy)
+                        self.Z(pair, power = 1, control_qubit = fourier_pair[1], noisy=noisy)
                     else:
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[1])
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[0])
-                    qc.cx(fourier_pair[0], fourier_pair[1])
+                        self.Z(pair, power = 2, control_qubit = fourier_pair[1], noisy=noisy)
+                        self.Z(pair, power = 2, control_qubit = fourier_pair[0], noisy=noisy)
+                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
         return
                 
                 
 class Z4(ToricCode):
     
-    def __init__(self, size, pbc, ancillas):
-        ToricCode.__init__(self, size, pbc, 4, ancillas)
+    def __init__(self, size, pbc, N_ancillas):
+        ToricCode.__init__(self, size, pbc, 4, N_ancillas)
         
-    def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
+    def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None, noisy = True):
         if power%4 == 0:
             return
         if qc is None:
             qc = self.circuit
+        gates = self.gates(noisy)
         if control_qubit == -1:        
             if power%4 == 2:                #Z^2 
-                qc.x(qubit_pair[0])
+                qc.append(gates['x'], [qubit_pair[0]])
             elif power%4 == 1:              #Z
-                qc.x(qubit_pair[1])
-                qc.x(qubit_pair[0])
-                qc.cx(qubit_pair[1], qubit_pair[0])
+                qc.append(gates['x'], [qubit_pair[1]])
+                qc.append(gates['x'], [qubit_pair[0]])
+                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
             elif power%4 == 3:              #Zdag
-                qc.cx(qubit_pair[1], qubit_pair[0])
-                qc.x(qubit_pair[0])
-                qc.x(qubit_pair[1])
+                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['x'], [qubit_pair[0]])
+                qc.append(gates['x'], [qubit_pair[1]])
         else:                             #same as above, but all operations are controlled
             if power%4 == 2:                #Z^2 
-                qc.cx(control_qubit, qubit_pair[0])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
             elif power%4 == 1:              #Z
-                qc.cx(control_qubit, qubit_pair[1])
-                qc.cx(control_qubit, qubit_pair[0])
-                qc.ccx(control_qubit, qubit_pair[1], qubit_pair[0])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
             elif power%4 == 3:              #Zdag
-                qc.ccx(control_qubit, qubit_pair[1], qubit_pair[0])
-                qc.cx(control_qubit, qubit_pair[0])
-                qc.cx(control_qubit, qubit_pair[1])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
         
     def X(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
         if power%4 == 0:
@@ -312,9 +336,10 @@ class Z4(ToricCode):
                 qc.cp(-pi/2, control_qubit, qubit_pair[1])
                 
                 
-    def MagneticGS(self, qc = None):
+    def MagneticGS(self, qc = None, noisy = True):
         if qc is None:
             qc = self.circuit
+        gates = self.gates(noisy)
         
         #all rows in parallel, three steps, sequential in the columns
         for x in range(self.Lx - 1):
@@ -332,16 +357,25 @@ class Z4(ToricCode):
                     
                     #if first step:
                     if i==0:    
-                        qc.h(fourier_pair[0])
-                        qc.h(fourier_pair[1])
+                        qc.append(gates['h'], [fourier_pair[0]])
+                        qc.append(gates['h'], [fourier_pair[1]])
+                        #qc.h(fourier_pair[0])
+                        #qc.h(fourier_pair[1])
                         pair_index = 0
                     
                     pair = qubit_list[pair_index]
+                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
+                    qc.append(gates['ccx'], [pair[1], fourier_pair[1], pair[0]]) #CCX(4,2,3)
+                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
+                    qc.append(gates['cx'], [fourier_pair[0], pair[0]])      #CX(1,3)
+                    qc.append(gates['cx'], [fourier_pair[1], pair[1]])      #CX(2,4)
+                    """
                     if pair_index > 1: qc.x(pair[1])      #X(4) if up or left link
                     qc.ccx(pair[1], fourier_pair[1], pair[0]) #CCX(4,2,3)
                     if pair_index > 1: qc.x(pair[1])      #X(4) if up or left link
                     qc.cx(fourier_pair[0], pair[0])      #CX(1,3)
                     qc.cx(fourier_pair[1], pair[1])      #CX(2,4)
+                    """
                                           
         #last column from top to bottom, last plaquette excluded       
         x = self.Lx - 1
@@ -351,23 +385,26 @@ class Z4(ToricCode):
             
             #fourier transform the lower link
             fourier_pair = qubit_list[0]
-            qc.h(fourier_pair[0])
-            qc.h(fourier_pair[1])
+            qc.append(gates['h'], [fourier_pair[0]])
+            qc.append(gates['h'], [fourier_pair[1]])
             
             for pair_index, pair in enumerate(qubit_list):
                 if pair_index > 0:
-                    if pair_index > 1: qc.x(pair[1])      #X(4) if up or left link
-                    qc.ccx(pair[1], fourier_pair[1], pair[0]) #CCX(4,2,3)
-                    if pair_index > 1: qc.x(pair[1])      #X(4) if up or left link
-                    qc.cx(fourier_pair[0], pair[0])   #CX(1,3)
-                    qc.cx(fourier_pair[1], pair[1])   #CX(2,4)
+                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
+                    qc.append(gates['ccx'], [pair[1], fourier_pair[1], pair[0]]) #CCX(4,2,3)
+                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
+                    qc.append(gates['cx'], [fourier_pair[0], pair[0]])   #CX(1,3)
+                    qc.append(gates['cx'], [fourier_pair[1], pair[1]])   #CX(2,4)
         return
 
 
 class Z2(ToricCode):
     
-    def __init__(self, size, pbc, ancillas):
-        ToricCode.__init__(self, size, pbc, 2, ancillas)
+    def __init__(self, size, pbc, N_ancillas):
+        Lattice.__init__(self, size, pbc, spl = 2)
+        self.N_ancillas = N_ancillas
+        self.N_qubits = self.nlinks + self.N_ancillas
+        self.circuit = QuantumCircuit(self.N_qubits, N_ancillas)
     
     def qubits_from_links(self, link_list):
         qubit_list = [link for link in link_list]
@@ -394,10 +431,16 @@ class Z2(ToricCode):
             qc.cz(control_qubit, qubit)
                 
                 
-    def MagneticGS(self, qc = None):
+    def MagneticGS(self, qc = None, noisy = True):
         if qc is None:
             qc = self.circuit
-        
+        h_label = cx_label = None
+        if noisy is False:
+            h_label = 'H_nl'
+            cx_label = 'nl'
+        h = ext.HGate(h_label)
+        cx = ext.CXGate(cx_label)
+            
         #all rows in parallel, three steps, sequential in the columns
         for x in range(self.Lx - 1):
             for i in range(3):
@@ -414,11 +457,13 @@ class Z2(ToricCode):
                     
                     #if first step:
                     if i==0:    
-                        qc.h(fourier_qubit)                  
+                        qc.append(h, [fourier_qubit])
+                        #qc.h(fourier_qubit)                  
                         target_index = 0
                     
                     target_qubit = qubit_list[target_index]
-                    qc.cx(fourier_qubit, target_qubit)      #CX(1,2)
+                    qc.append(cx, [fourier_qubit, target_qubit])
+                    #qc.cx(fourier_qubit, target_qubit)      #CX(1,2)
                                           
         #last column from top to bottom, last plaquette excluded       
         x = self.Lx - 1
@@ -428,8 +473,10 @@ class Z2(ToricCode):
             
             #fourier transform the lower link
             fourier_qubit = qubit_list[0]
-            qc.h(fourier_qubit)
+            qc.append(h, [fourier_qubit])
+            #qc.h(fourier_qubit)
             
             for target_index, target_qubit in enumerate(qubit_list):
                 if target_index > 0:
-                    qc.cx(fourier_qubit, target_qubit)   #CX(1,2)
+                    qc.append(cx, [fourier_qubit, target_qubit])
+                    #qc.cx(fourier_qubit, target_qubit)   #CX(1,2)
