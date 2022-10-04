@@ -93,16 +93,21 @@ class ToricCode(Lattice):
         for qubit_pair in qubit_path:
             self.X(qubit_pair, power, control_qubit, qc)
      
-    def Bp(self, site, power = 1, control_qubit = -1, qc = None, noisy = True):   
-        if type(power) is not int:
-            raise RuntimeError("Plaquette raised to a non-integer power")
-        x, y = site
-        sites = [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]
+    def Bp(self, site, power = 1, control_qubit = -1, qc = None, noisy = True):
         if power%self.spl == 0:
             return
-        else:
-            for i in range(4):
-                self.Z_string(sites[i], sites[(i+1)%4], power, control_qubit, qc, noisy)
+        x, y = site
+        sites = [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]
+        for i in range(4):
+            self.Z_string(sites[i], sites[(i+1)%4], power, control_qubit, qc, noisy)
+    
+    def As(self, site, power = 1, control_qubit = -1, qc = None, noisy = True):
+        if power%self.spl == 0:
+            return
+        x, y = site
+        endsites = [(x+1, y), (x, y+1), (x-1, y), (x, y-1)]
+        for endsite in endsites:
+            self.X_string(site, endsite, power, control_qubit, qc)
         
     def init_dyons(self, low_charges = (1,1), up_charges = (1,1), **kwargs):
         """      
@@ -410,7 +415,7 @@ class Z2(ToricCode):
         qubit_list = [link for link in link_list]
         return qubit_list
         
-    def Z(self, qubit, power=1, control_qubit = -1, qc = None):
+    def Z(self, qubit, power=1, control_qubit = -1, qc = None, noisy = True):
         if power%2==0:
             return
         if qc is None:
@@ -420,7 +425,7 @@ class Z2(ToricCode):
         else:                             
             qc.cx(control_qubit, qubit)
            
-    def X(self, qubit, power=1, control_qubit = -1, qc = None):
+    def X(self, qubit, power=1, control_qubit = -1, qc = None, noisy = True):
         if power%2==0:
             return
         if qc is None:

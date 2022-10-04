@@ -16,6 +16,7 @@ from qiskit.tools import job_monitor
 from IPython.display import display
 import collections
 import matplotlib.pyplot as plt
+import tools as ts
 
 def plot_counts(counts):
     #plot qiskit hist
@@ -66,8 +67,8 @@ def build_noise():
     # Error probabilities
     prob_1 = 0.003  # 1-qubit gate
     prob_2 = 0.02   # 2-qubit gate
-    #prob_3 = 0.1
-    prob_3 = 1 - ((1-prob_2)**13)*((1-prob_1)**12) # 3-qubit gate
+    prob_3 = 0.1
+    #prob_3 = 1 - ((1-prob_2)**13)*((1-prob_1)**12) # 3-qubit gate
     
     # Depolarizing quantum errors
     error_1 = noise.depolarizing_error(prob_1, 1)
@@ -81,16 +82,45 @@ def build_noise():
     noise_model.add_all_qubit_quantum_error(error_3, ['ccx'])
     return noise_model
 
+def build_noise_better():
+    # Error probabilities
+    prob_1 = 0.003  # 1-qubit gate
+    prob_2 = 0.02   # 2-qubit gate
+    prob_3 = 0.05
+    #prob_3 = 1 - ((1-prob_2)**13)*((1-prob_1)**12) # 3-qubit gate
+    T1 = 180e3
+    T2 = 180e3
+    
+    # Depolarizing quantum errors
+    dep_gate = noise.depolarizing_error(prob_1, 1)
+    dep_cx = noise.depolarizing_error(prob_2, 2)
+    dep_ccx = noise.depolarizing_error(prob_3, 3)
+    # Thermal relaxation errors
+    therm_gate = noise.thermal_relaxation_error(T1, T2, 50)   #estimated
+    therm_cx = noise.thermal_relaxation_error(T1, T2, 536.9).expand(
+             noise.thermal_relaxation_error(T1, T2, 536.9))     #exact
+    therm_reset = noise.thermal_relaxation_error(T1, T2, 4000)    #estimated
+    therm_readout = noise.thermal_relaxation_error(T1, T2, 4924.4)    #exact
+    
+    # Add errors to noise model
+    noise_model = noise.NoiseModel()
+    noise_model.add_all_qubit_quantum_error(dep_gate.compose(therm_gate), ['id', 'rz', 'sx', 'x', 'h', 'z', 's', 'sdg'])
+    noise_model.add_all_qubit_quantum_error(dep_cx.compose(therm_cx), ['cx', 'cp'])
+    noise_model.add_all_qubit_quantum_error(dep_ccx, ['ccx'])
+    noise_model.add_all_qubit_quantum_error(therm_reset, ['reset'])
+    noise_model.add_all_qubit_quantum_error(therm_readout, ['measure'])
+    return noise_model
+
 IBMQ.load_account()
 provider = IBMQ.get_provider(hub='ibm-q')
 backend = provider.get_backend('ibm_nairobi')
-#noise_model = noise.NoiseModel.from_backend(backend)
+noise_model = noise.NoiseModel.from_backend(backend)
 
 
 # Initialize toric code and registers
-N_reg = 3
+N_reg = 2
 test = tc.Z4((3,2), (True,True), N_reg)
-test.MagneticGS(noisy=True)
+test.MagneticGS()
 ancilla = test.N_qubits-test.N_ancillas
 reg_list = [ancilla+i for i in range(N_reg)]
 test.circuit.h(reg_list)
@@ -99,9 +129,9 @@ test.circuit.h(reg_list)
 
 test.Z_string((1,1), (2,1))
 test.X_string((1,0), (1,1), power = 1)
-test.X_string((2,0), (2,1), power = 1)
+#test.X_string((2,0), (2,1), power = 1)
 for i in range(N_reg):
-    test.Bp((0,0), power=3*(2**i), control_qubit=reg_list[i], noisy=False)
+    test.Bp((0,0), power=3*(2**i), control_qubit=reg_list[i])
 
 #Access non trivial sector and measure it with 't Hooft loop
 """
@@ -125,7 +155,7 @@ qc_list = [test.circuit]
 # Draw the circuit and transpile it
 display(test.circuit.draw('mpl'))
 simulator = AerSimulator(method = "statevector")
-tqc_list = transpile(qc_list, simulator)
+tqc_list = transpile(qc_list, simulator, basis_gates=noise_model.basis_gates, optimization_level=2)
 display(tqc_list[0].draw('mpl'))
 
 # Print circuit depth, size, width before and after transpile
@@ -138,19 +168,17 @@ print("Transpiled circuit width:", tqc_list[0].width())
 
 # Run circuit on simulator/backend and get results
 N_shots = 2000
-job = simulator.run(tqc_list, job_name = "Toric Test", shots = N_shots, noise_model = build_noise())
+job = simulator.run(tqc_list, job_name = "Toric Test", shots = N_shots)
 job_monitor(job)
 result = job.result()
 
 # Extract counts
 counts = result.get_counts()
 print("\nTotal counts are:", counts)
-plot_counts(counts)
-#show_results(result)
+ts.plot_counts(counts)
 
 # Print time taken
 print("\nRunning time {}s".format(result.time_taken))
 
 
-    
 
