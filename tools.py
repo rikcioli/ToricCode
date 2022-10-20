@@ -11,10 +11,12 @@ import numpy as np
 from IPython.display import display
 import qiskit.providers.aer.noise as noise
 from qiskit.visualization import plot_histogram
+import sys
 
 def plot_counts(counts):
     #plot qiskit hist
     display(plot_histogram(counts))
+    
     #plot errorbar hist
     sorted_counts = dict(sorted(counts.items()))
     keylist = list(sorted_counts.keys())
@@ -29,6 +31,9 @@ def plot_counts(counts):
     plt.show()  
     
 def show_results(result):
+    #DEPRECATED, NOT USEFUL ANYMORE FOR HISTOGRAM ERRORS. CAN BE USED FOR GAUSSIAN
+    #ERRORS INSTEAD
+    
     #plot qiskit hist
     counts = result.get_counts()
     display(plot_histogram(counts))   
@@ -55,11 +60,12 @@ def show_results(result):
     yerr = list(dict_err.values())
     plt.bar(keylist, keycounts, width = 0.5, yerr = yerr)
     plt.show()
+    
 
-def build_noise():
+def build_noise(dep1 = 0.003, dep2 = 0.02):
     # Error probabilities
-    prob_1 = 0.003  # 1-qubit gate
-    prob_2 = 0.02   # 2-qubit gate
+    prob_1 = dep1  # 1-qubit gate
+    prob_2 = dep2   # 2-qubit gate
     prob_3 = 1 - ((1-prob_2)**13)*((1-prob_1)**12) # 3-qubit gate
     T1 = 180e3
     T2 = 180e3
@@ -82,6 +88,7 @@ def build_noise():
     noise_model.add_all_qubit_quantum_error(therm_reset, ['reset'])
     noise_model.add_all_qubit_quantum_error(therm_readout, ['measure'])
     return noise_model
+    
 
 def save_state(state, path = 'C:/Users/rikci/.spyder-py3/TESI/states/', name = 'Z4_3bit'):
     """
@@ -119,3 +126,82 @@ def load_state(path = 'C:/Users/rikci/.spyder-py3/TESI/states/', name = 'Z4_3bit
     for index, im in im_sparse:
         state.imag[index] = im
     return state
+
+
+def _swapBits(x, p1, p2):
+    """Swap bits of positions p1 and p2 in number x"""
+    xor = (((x >> p1) ^ (x >> p2)) & 1)
+    return x ^ ( (xor << p1) | (xor << p2))
+
+def _findPerm(target_list):
+    """target_list[i] is a value associated to index i. The index represents the
+    starting configuration. The value represents the final configuration after
+    the permutation. So for example, target_list[0] = 3 means the object of 
+    position 0 will become the object of position 3. 
+    This is opposite to qiskit initial_layout assignments, where the starting qubits
+    take the place of the end qubits."""
+    permutations = []
+    graph = {
+        start: end
+        for start, end in enumerate(target_list)
+        }
+    for start, end in graph.items():
+        check_presence = [start in perm for perm in permutations]
+        if True not in check_presence:
+            if end != start:
+                perm = [start, end]      
+                newstep = graph[end]
+                while newstep != start:
+                    perm.append(newstep)
+                    newstep = graph[newstep]
+                permutations.append(perm.copy())
+    return permutations
+
+def _permToSwap(permutations_list):
+    swaps = []
+    for perm in permutations_list:
+        for i in range(len(perm)-1):
+            swaps.append(perm[i:i+2])
+    return swaps
+            
+
+def swapSparseState(sparse_state, assign_list):
+    """Swap qubits in a given state (state is a scipy coo_matrix of complex). The assign
+    list works this way: the index runs over the starting positions, while the values
+    represent the end configuration, after the permutation. assign_list[i] = j
+    means that i COPIES j. It DOES NOT take its place, which is how Qiskit instead
+    operates. If you want to recover the original Qiskit statevector as it was
+    before the transpilation, simply put the initial_layout of the transpiler into
+    assign_list."""
+    permutations = _findPerm(assign_list)
+    swaps = _permToSwap(permutations)
+    for index in range(sparse_state.nnz): 
+        for swap in swaps:
+            sparse_state.col[index] = _swapBits(sparse_state.col[index], swap[0], swap[1])
+    return sparse_state
+
+
+def cleanState(state, eps = sys.float_info.epsilon):
+    return np.where(abs(state) > eps, state, 0)
+
+def evaluateFidelity(ensemble, state_ideal):
+    fidelity = 0
+    state_ideal = state_ideal.getH()
+    values = [abs(state.dot(state_ideal).toarray()[0,0])**2 for state in ensemble]
+    fidelity = sum(values)/len(ensemble)
+    return np.sqrt(fidelity)
+
+def binning(object_list, N_bins):
+    bin_width = len(object_list)//N_bins
+    binned_items = [object_list[i*bin_width : (i+1)*bin_width] for i in range(N_bins)]
+    return binned_items
+
+def fidelityError(ensemble, state_ideal, N_bins):
+    fidelity = evaluateFidelity(ensemble, state_ideal)
+    subensembles = binning(ensemble, N_bins)
+    subfidelities = [evaluateFidelity(ensemble, state_ideal) for ensemble in subensembles]
+    SDOM = np.std(subfidelities, ddof = 1)/np.sqrt(N_bins)
+    error = SDOM*N_bins
+    return fidelity, error
+    
+    

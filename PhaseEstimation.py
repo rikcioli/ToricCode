@@ -5,7 +5,7 @@ Created on Fri Apr 29 18:31:08 2022
 @author: rikci
 """
 
-import ToricCode as tc
+import ToricCodeNew as tc
 import numpy as np
 from qiskit import transpile, IBMQ
 from qiskit.providers.aer import AerSimulator
@@ -111,15 +111,19 @@ def build_noise_better():
     noise_model.add_all_qubit_quantum_error(therm_readout, ['measure'])
     return noise_model
 
+#IBMQ.enable_account('267761afd846893dec77bf06dc487d6c7b9569ed20605f88fbddf79e6fb4d149dcfb04da0e4c78994302537adbb9da62c7cfc1d5341f9d4a4c8b416a953bbc9b')
 IBMQ.load_account()
 provider = IBMQ.get_provider(hub='ibm-q')
 backend = provider.get_backend('ibm_nairobi')
-noise_model = noise.NoiseModel.from_backend(backend)
 
+#provider = IBMQ.get_provider(hub='ibm-q-cern')
+#backend = provider.get_backend('ibm_cairo')
+noise_model = noise.NoiseModel.from_backend(backend)
+simulator = AerSimulator(method = "statevector")
 
 # Initialize toric code and registers
-N_reg = 2
-test = tc.Z4((3,2), (True,True), N_reg)
+N_reg = 3
+test = tc.Z3((3,2), (True, True), N_reg)
 test.MagneticGS()
 ancilla = test.N_qubits-test.N_ancillas
 reg_list = [ancilla+i for i in range(N_reg)]
@@ -131,7 +135,7 @@ test.Z_string((1,1), (2,1))
 test.X_string((1,0), (1,1), power = 1)
 #test.X_string((2,0), (2,1), power = 1)
 for i in range(N_reg):
-    test.Bp((0,0), power=3*(2**i), control_qubit=reg_list[i])
+    test.Bp((0,0), power=2*(2**i), control_qubit=reg_list[i])
 
 #Access non trivial sector and measure it with 't Hooft loop
 """
@@ -146,29 +150,36 @@ for i in range(N_reg):
     test.exchange_countclock(2**(i+1), control_qubit = reg_list[i])
 """
 
-
 test.circuit.append(QFT(N_reg, inverse=True), [test.circuit.qubits[reg] for reg in reg_list])
 test.circuit.measure(reg_list, [i for i in range(N_reg)])
-qc_list = [test.circuit]
 
-
-# Draw the circuit and transpile it
 display(test.circuit.draw('mpl'))
-simulator = AerSimulator(method = "statevector")
-tqc_list = transpile(qc_list, simulator, basis_gates=noise_model.basis_gates, optimization_level=2)
-display(tqc_list[0].draw('mpl'))
+
+# Transpile the circuit multiple times for stochastic swap
+qc_list = [test.circuit.copy() for i in range(10)]
+tqc_list = transpile(qc_list, 
+                     simulator, 
+                     optimization_level=1, 
+                     )
+
+# Find best circuit
+depths = [tqc.depth() for tqc in tqc_list]
+min_depth_index = min(range(len(depths)), key=depths.__getitem__)
+tqc = tqc_list[min_depth_index]
+display(tqc.draw('mpl'))
+
 
 # Print circuit depth, size, width before and after transpile
-print("\nTest circuit depth:", qc_list[0].depth())
-print("Test circuit size:", qc_list[0].size())
-print("Test circuit width:", qc_list[0].width())
-print("\nTranspiled circuit depth:", tqc_list[0].depth())
-print("Transpiled circuit size:", tqc_list[0].size())
-print("Transpiled circuit width:", tqc_list[0].width())
+print("\nTest circuit depth:", test.circuit.depth())
+print("Test circuit size:", test.circuit.size())
+print("Test circuit width:", test.circuit.width())
+print("\nTranspiled circuit depth:", tqc.depth())
+print("Transpiled circuit size:", tqc.size())
+print("Transpiled circuit width:", tqc.width())
 
 # Run circuit on simulator/backend and get results
 N_shots = 2000
-job = simulator.run(tqc_list, job_name = "Toric Test", shots = N_shots)
+job = simulator.run(tqc, job_name = "Toric Test", shots = N_shots)
 job_monitor(job)
 result = job.result()
 
