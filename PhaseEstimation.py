@@ -5,7 +5,7 @@ Created on Fri Apr 29 18:31:08 2022
 @author: rikci
 """
 
-import ToricCodeNewFinal as tc
+import ToricCode as tc
 import tools as ts
 import numpy as np
 from qiskit import transpile, IBMQ
