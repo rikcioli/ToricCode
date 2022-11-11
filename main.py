@@ -6,7 +6,7 @@ Created on Fri Apr 29 18:31:08 2022
 """
 
 import math
-import ToricCodeNewFinal as tc
+import ToricCode as tc
 import tools as ts
 import scipy.sparse as sp
 from qiskit import transpile, IBMQ, QuantumCircuit
