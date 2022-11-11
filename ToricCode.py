@@ -111,6 +111,48 @@ class ToricCode(Lattice):
                         self._CU(control_link, target_link, inverse, qc, noisy)
         return
     
+    def MagneticGS_2(self, qc = None, noisy = True):
+        if self.nlinks_y > self.nlinks_x:
+            raise RuntimeError("nlinks_y is greater than nlinks_x. To correctly initialize the Magnetic GS, please use a lattice with nlinks_x >= nlinks_y")
+            
+        #all columns in parallel, three steps, sequential in the rows
+        for target_index in [1, 3, 2]:
+            inverse = target_index > 1
+            for y in reversed(range(self.nlinks_y - self.pbc_y)):
+                #three iterations to perform in parallel these steps on each column but the last
+                #i=0: fourier transform the bottom link and act on bottom->right links
+                #i=1: act on bottom->left links
+                #i=2: act on bottom->top links (this is the only step that must
+                #be done sequentially in the rows, from top to bottom)
+                
+                for x in range(self.nlinks_x):                                     
+                    link_list = self.plaquette((x,y), from_zero = True)
+                    control_link = link_list[0]     #bottom link
+                    
+                    #fourier transf the control link if first step
+                    if target_index == 1:    
+                        self._elecToMagnGS(control_link, qc, noisy)
+                    
+                    target_link = link_list[target_index]
+                    self._CU(control_link, target_link, inverse, qc, noisy)
+                                          
+        if self.pbc_x == True:
+            #last column from top to bottom, last plaquette excluded       
+            y = self.Ly - 1
+            for target_index in [0, 2, 3]:
+                inverse = target_index > 1
+                for x in range(self.nlinks_x - 1):
+                    link_list = self.plaquette((x,y), from_zero = True)
+                    control_link = link_list[1]     #right link
+                    
+                    #fourier transform the control link if first step
+                    if target_index == 0:
+                        self._elecToMagnGS(control_link, qc, noisy)
+                    
+                    target_link = link_list[target_index]
+                    self._CU(control_link, target_link, inverse, qc, noisy)
+        return
+    
                     
     def Z_string(self, site0, site1, power = 1, **kwargs):        
         if power%self.spl==0:
@@ -223,15 +265,18 @@ class Z3(ToricCode):
     def __init__(self, size, pbc, N_ancillas = 0, backend = None):
         super().__init__(size, pbc, 3, N_ancillas, backend)
         N_qubits = 2*self.nlinks + self.N_ancillas
+        N_clbits = self.N_ancillas
         if backend is None:
             self.N_qubits = N_qubits
+            self.N_clbits = N_clbits
         else:
             N_qubits_backend = backend.configuration().n_qubits
             if N_qubits_backend < N_qubits:
                 raise RuntimeError('Number of qubits required exceeds available on given backend')
             else:
                 self.N_qubits = N_qubits_backend
-        self.circuit = QuantumCircuit(self.N_qubits, self.N_qubits)
+                self.N_clbits = N_qubits_backend
+        self.circuit = QuantumCircuit(self.N_qubits, self.N_clbits)
         self.reg_list = [(2*self.nlinks + i) for i in range(N_ancillas)]
         
     
@@ -299,7 +344,32 @@ class Z3(ToricCode):
             qc = self.circuit
         gates = self._gates(noisy)
         control_qubits = self._qubits_from_link(control_link)
+        target_qubits = self._qubits_from_link(target_link)
         
+        if inverse == False:
+            # If control is 10, CNOT target[1]->target[0]
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[1], target_qubits[0]])
+            # If control is not 00, CNOT target[0]->target[1]
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[0], target_qubits[1]])
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            # Sum control and target
+            qc.append(gates['ccx'], [control_qubits[1], target_qubits[1], target_qubits[0]])
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])
+        else:
+            # Everything in reverse order
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])
+            qc.append(gates['ccx'], [control_qubits[1], target_qubits[1], target_qubits[0]])
+            
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[0], target_qubits[1]])
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[1], target_qubits[0]])
+            
+        # OLD CU
+        """
         qc.append(gates['cx'], [control_qubits[0], control_qubits[1]])
         if inverse == False:
             self._Z(target_link, power = 1, control_qubit = control_qubits[0], noisy=noisy)
@@ -308,7 +378,7 @@ class Z3(ToricCode):
             self._Z(target_link, power = 2, control_qubit = control_qubits[1], noisy=noisy)
             self._Z(target_link, power = 2, control_qubit = control_qubits[0], noisy=noisy)
         qc.append(gates['cx'], [control_qubits[0], control_qubits[1]])
-       
+       """
                 
                 
 class Z4(ToricCode):
@@ -316,15 +386,18 @@ class Z4(ToricCode):
     def __init__(self, size, pbc, N_ancillas = 0, backend = None):
         super().__init__(size, pbc, 4, N_ancillas, backend)
         N_qubits = 2*self.nlinks + self.N_ancillas
+        N_clbits = self.N_ancillas
         if backend is None:
             self.N_qubits = N_qubits
+            self.N_clbits = N_clbits
         else:
             N_qubits_backend = backend.configuration().n_qubits
             if N_qubits_backend < N_qubits:
                 raise RuntimeError('Number of qubits required exceeds available on given backend')
             else:
                 self.N_qubits = N_qubits_backend
-        self.circuit = QuantumCircuit(self.N_qubits, self.N_qubits)
+                self.N_clbits = N_qubits_backend
+        self.circuit = QuantumCircuit(self.N_qubits, self.N_clbits)
         self.reg_list = [(2*self.nlinks + i) for i in range(N_ancillas)]
         
         
@@ -339,24 +412,24 @@ class Z4(ToricCode):
             if power%4 == 2:                #Z^2 
                 qc.append(gates['x'], [qubit_pair[0]])
             elif power%4 == 1:              #Z
-                qc.append(gates['x'], [qubit_pair[1]])
-                qc.append(gates['x'], [qubit_pair[0]])
                 qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['x'], [qubit_pair[1]])
+                
             elif power%4 == 3:              #Zdag
-                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
-                qc.append(gates['x'], [qubit_pair[0]])
                 qc.append(gates['x'], [qubit_pair[1]])
+                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
+                
         else:                             #same as above, but all operations are controlled
             if power%4 == 2:                #Z^2 
                 qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
             elif power%4 == 1:              #Z
-                qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
-                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
                 qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
+                
             elif power%4 == 3:              #Zdag
-                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
-                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
                 qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
+                
         
     def _X(self, link, power = 1, control_qubit = -1, qc = None, noisy = True):
         #NOISELESS OPTION HAS YET TO BE IMPLEMENTED
@@ -402,18 +475,18 @@ class Z4(ToricCode):
         control_qubits = self._qubits_from_link(control_link)
         target_qubits = self._qubits_from_link(target_link)
         
-        # X(4) if up or left link
-        if inverse == True: qc.append(gates['x'], [target_qubits[1]]) 
-        
-        # CCX(4,2,3)
-        qc.append(gates['ccx'], [target_qubits[1], control_qubits[1], target_qubits[0]]) 
-        
-        # X(4) if up or left link
-        if inverse == True: qc.append(gates['x'], [target_qubits[1]]) 
-        
-        # CX(1,3) and #CX(2,4)       
-        qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])      
-        qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])      
+        if inverse == False:  
+            # CCX(2,4,3)    CARRY
+            qc.append(gates['ccx'], [control_qubits[1], target_qubits[1], target_qubits[0]])        
+            # CX(1,3) and #CX(2,4)  XOR
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])      
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])      
+        else:
+            # XOR
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])   
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])
+            # CARRY
+            qc.append(gates['ccx'], [target_qubits[1], control_qubits[1], target_qubits[0]])  
 
 
 class Z2(ToricCode):
@@ -421,15 +494,18 @@ class Z2(ToricCode):
     def __init__(self, size, pbc, N_ancillas = 0, backend = None):
         super().__init__(size, pbc, 2, N_ancillas, backend)
         N_qubits = self.nlinks + self.N_ancillas
+        N_clbits = self.N_ancillas
         if backend is None:
             self.N_qubits = N_qubits
+            self.N_clbits = N_clbits
         else:
             N_qubits_backend = backend.configuration().n_qubits
             if N_qubits_backend < N_qubits:
                 raise RuntimeError('Number of qubits required exceeds available on given backend')
             else:
                 self.N_qubits = N_qubits_backend
-        self.circuit = QuantumCircuit(self.N_qubits, self.N_qubits)
+                self.N_clbits = N_qubits_backend
+        self.circuit = QuantumCircuit(self.N_qubits, self.N_clbits)
         self.reg_list = [(self.nlinks + i) for i in range(N_ancillas)]
         
         
