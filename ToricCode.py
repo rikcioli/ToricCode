@@ -13,27 +13,28 @@ from lattice import Lattice
 
 """
 IMPORTANT: the encoding between links of the lattice and qubits is, for Z3 and Z4:
-    QUBIT 0 = 2*LATTICE
-    QUBIT 1 = 2*LATTICE + 1
-Except for the ancilla, which is the qubit N° N_qubits-1
+    QUBIT 0 = 2*LINK
+    QUBIT 1 = 2*LINK + 1
+Except for the registers, which are the qubits ranging from N_qubits-N_ancillas to N_qubits
 """
 
 
 class ToricCode(Lattice):
     
-    def __init__(self, size, pbc, spl, N_ancillas = 0):
-        Lattice.__init__(self, size, pbc, spl)
+    def __init__(self, size, pbc, spl, N_ancillas = 0, backend = None):
+        super().__init__(size, pbc, spl)
         self.N_ancillas = N_ancillas
+        """
         self.N_qubits = 2*self.nlinks + self.N_ancillas
-        self.circuit = QuantumCircuit(self.N_qubits, N_ancillas)
-
-        
-    def qubits_from_links(self, link_list):
-        """Returns the qubits associated to a given list of links"""
-        qubit_list = [(2*link, 2*link+1) for link in link_list]
-        return qubit_list
+        self.circuit = QuantumCircuit(self.N_qubits, self.N_qubits)
+        self.reg_list = [(2*self.nlinks + i) for i in range(N_ancillas)]
+        """
+    def _qubits_from_link(self, link):
+        """Returns the qubits associated to a given link"""
+        qubits = (2*link, 2*link+1)
+        return qubits
     
-    def gates(self, noisy = True):
+    def _gates(self, noisy = True):
         """Initialize noiseless gates to use in simulations"""
         h_label = x_label = ry_label = ch_label = cx_label = ccx_label = None
         if noisy is False:
@@ -53,19 +54,109 @@ class ToricCode(Lattice):
         return gates
         
 
-    def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
+    def _Z(self, link, power = 1, control_qubit = -1, qc = None, noisy = True):
         return
         
-    def X(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
+    def _X(self, link, power = 1, control_qubit = -1, qc = None, noisy = True):
         return         
+    
+    def _elecToMagnGS(self, link, qc = None, noisy = True):
+        return
+    
+    def _CU(self, control_link, target_link, inverse = False, qc = None, noisy = True):
+        return
             
     def MagneticGS(self, qc = None, noisy = True):
-        return              
+        if self.nlinks_y > self.nlinks_x:
+            raise RuntimeError("nlinks_y is greater than nlinks_x. To correctly initialize the Magnetic GS, please use a lattice with nlinks_x >= nlinks_y")
+            
+        #all rows in parallel, three steps, sequential in the columns
+        for x in range(self.Lx - 1):
+            for i in range(3):
+                #three iterations to perform in parallel these steps on each column but the last
+                #i=0: fourier transform the right link and act on right->bottom links
+                #i=1: act on right->top links
+                #i=2: act on right->left links (this is the only step that must
+                #be done sequentially in the columns)
+                inverse = False
+                for y in range(self.nlinks_y):                    
+                    link_list = self.plaquette((x,y), from_zero = True)
+                    control_link = link_list[1] #right link
+                    target_index = i+1
+                    
+                    #if first step:
+                    if i==0:    
+                        self._elecToMagnGS(control_link, qc, noisy)
+                        target_index = 0
+                    
+                    target_link = link_list[target_index]
+                    if target_index > 1: inverse = True
+                    self._CU(control_link, target_link, inverse, qc, noisy)
+                                          
+        if self.pbc_x == True:
+            #last column from top to bottom, last plaquette excluded       
+            x = self.Lx - 1
+            for y in range(self.Ly - 1, 0, -1):
+                link_list = self.plaquette((x,y), from_zero = True)
+                control_link = link_list[0]
+                
+                #fourier transform the lower link
+                self._elecToMagnGS(control_link, qc, noisy)
+    
+                for target_index, target_link in enumerate(link_list):
+                    inverse = False
+                    if target_index > 0:
+                        if target_index > 1:
+                            inverse = True
+                        self._CU(control_link, target_link, inverse, qc, noisy)
+        return
+    
+    def MagneticGS_2(self, qc = None, noisy = True):
+        if self.nlinks_y > self.nlinks_x:
+            raise RuntimeError("nlinks_y is greater than nlinks_x. To correctly initialize the Magnetic GS, please use a lattice with nlinks_x >= nlinks_y")
+            
+        #all columns in parallel, three steps, sequential in the rows
+        for target_index in [1, 3, 2]:
+            inverse = target_index > 1
+            for y in reversed(range(self.nlinks_y - self.pbc_y)):
+                #three iterations to perform in parallel these steps on each column but the last
+                #i=0: fourier transform the bottom link and act on bottom->right links
+                #i=1: act on bottom->left links
+                #i=2: act on bottom->top links (this is the only step that must
+                #be done sequentially in the rows, from top to bottom)
+                
+                for x in range(self.nlinks_x):                                     
+                    link_list = self.plaquette((x,y), from_zero = True)
+                    control_link = link_list[0]     #bottom link
+                    
+                    #fourier transf the control link if first step
+                    if target_index == 1:    
+                        self._elecToMagnGS(control_link, qc, noisy)
+                    
+                    target_link = link_list[target_index]
+                    self._CU(control_link, target_link, inverse, qc, noisy)
+                                          
+        if self.pbc_x == True:
+            #last column from top to bottom, last plaquette excluded       
+            y = self.Ly - 1
+            for target_index in [0, 2, 3]:
+                inverse = target_index > 1
+                for x in range(self.nlinks_x - 1):
+                    link_list = self.plaquette((x,y), from_zero = True)
+                    control_link = link_list[1]     #right link
+                    
+                    #fourier transform the control link if first step
+                    if target_index == 0:
+                        self._elecToMagnGS(control_link, qc, noisy)
+                    
+                    target_link = link_list[target_index]
+                    self._CU(control_link, target_link, inverse, qc, noisy)
+        return
     
                     
-    def Z_string(self, site0, site1, power = 1, control_qubit = -1, qc = None, noisy = True):        
+    def Z_string(self, site0, site1, power = 1, **kwargs):        
         if power%self.spl==0:
-            return
+            return        
         delta = site1[0] - site0[0] + site1[1] - site0[1]
         if delta==0:
             raise RuntimeError("Z string of lenght zero, please insert valid path")
@@ -74,11 +165,10 @@ class ToricCode(Lattice):
         else:
             path = self.path(site1, site0)
             power = self.spl - power%self.spl
-        qubit_path = self.qubits_from_links(path)
-        for qubit_pair in qubit_path:
-            self.Z(qubit_pair, power, control_qubit, qc, noisy)    
+        for link in path:
+            self._Z(link, power, **kwargs) 
                     
-    def X_string(self, site0, site1, power = 1, control_qubit = -1, qc = None):
+    def X_string(self, site0, site1, power = 1, **kwargs):
         if power%self.spl==0:
             return
         delta = site1[0] - site0[0] + site1[1] - site0[1]
@@ -89,25 +179,24 @@ class ToricCode(Lattice):
         else:
             path = self.path(site1, site0)
             power = self.spl - power%self.spl
-        qubit_path = self.qubits_from_links(path)
-        for qubit_pair in qubit_path:
-            self.X(qubit_pair, power, control_qubit, qc)
+        for link in path:
+            self._X(link, power, **kwargs)
      
-    def Bp(self, site, power = 1, control_qubit = -1, qc = None, noisy = True):
+    def Bp(self, site, power = 1, **kwargs):
         if power%self.spl == 0:
             return
         x, y = site
         sites = [(x, y), (x+1, y), (x+1, y+1), (x, y+1)]
         for i in range(4):
-            self.Z_string(sites[i], sites[(i+1)%4], power, control_qubit, qc, noisy)
+            self.Z_string(sites[i], sites[(i+1)%4], power, **kwargs)
     
-    def As(self, site, power = 1, control_qubit = -1, qc = None, noisy = True):
+    def As(self, site, power = 1, **kwargs):
         if power%self.spl == 0:
             return
         x, y = site
         endsites = [(x+1, y), (x, y+1), (x-1, y), (x, y-1)]
         for endsite in endsites:
-            self.X_string(site, endsite, power, control_qubit, qc)
+            self.X_string(site, endsite, power, **kwargs)
         
     def init_dyons(self, low_charges = (1,1), up_charges = (1,1), **kwargs):
         """      
@@ -173,15 +262,31 @@ class ToricCode(Lattice):
 
 class Z3(ToricCode):
     
-    def __init__(self, size, pbc, N_ancillas):
-        ToricCode.__init__(self, size, pbc, 3, N_ancillas)
+    def __init__(self, size, pbc, N_ancillas = 0, backend = None):
+        super().__init__(size, pbc, 3, N_ancillas, backend)
+        N_qubits = 2*self.nlinks + self.N_ancillas
+        N_clbits = self.N_ancillas
+        if backend is None:
+            self.N_qubits = N_qubits
+            self.N_clbits = N_clbits
+        else:
+            N_qubits_backend = backend.configuration().n_qubits
+            if N_qubits_backend < N_qubits:
+                raise RuntimeError('Number of qubits required exceeds available on given backend')
+            else:
+                self.N_qubits = N_qubits_backend
+                self.N_clbits = N_qubits_backend
+        self.circuit = QuantumCircuit(self.N_qubits, self.N_clbits)
+        self.reg_list = [(2*self.nlinks + i) for i in range(N_ancillas)]
+        
     
-    def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None, noisy = True):
+    def _Z(self, link, power = 1, control_qubit = -1, qc = None, noisy = True):
         if power%3 == 0:
             return
         if qc is None:
             qc = self.circuit
-        gates = self.gates(noisy)
+        gates = self._gates(noisy)
+        qubit_pair = self._qubits_from_link(link)
         if control_qubit == -1:
             if power%3 == 1:
                 qc.append(gates['x'], [qubit_pair[0]])
@@ -201,11 +306,13 @@ class Z3(ToricCode):
                 qc.append(gates['ccx'], [control_qubit, qubit_pair[0], qubit_pair[1]])
                 qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
     
-    def X(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
+    def _X(self, link, power = 1, control_qubit = -1, qc = None, noisy = True):
+        #NOISELESS OPTION HAS YET TO BE IMPLEMENTED
         if power%3 == 0:
             return
         if qc is None:
             qc = self.circuit
+        qubit_pair = self._qubits_from_link(link)
         if control_qubit == -1:
             if power%3 == 1:
                 qc.p(-2*pi/3, qubit_pair[0])
@@ -221,106 +328,116 @@ class Z3(ToricCode):
                 qc.cp(2*pi/3, control_qubit, qubit_pair[0])
                 qc.cp(-2*pi/3, control_qubit, qubit_pair[1])
                 
-                
-    def MagneticGS(self, qc = None, noisy = True):
+    def _elecToMagnGS(self, link, qc = None, noisy = True):
+        """Convert link from electric GS to magnetic GS"""
         if qc is None:
             qc = self.circuit
-        gates = self.gates(noisy)
-        #all rows in parallel, three steps, sequential in the columns
-        for x in range(self.Lx - 1):
-            for i in range(3):
-                #three iterations to perform in parallel these steps on each column but the last
-                #i=0: fourier transform the right link and act on right->bottom links
-                #i=1: act on right->top links
-                #i=2: act on right->left links (this is the only step that must
-                #be done sequentially in the columns)
-                for y in range(self.Ly):
-                    link_list = self.plaquette((x,y), from_zero = True)
-                    qubit_list = self.qubits_from_links(link_list)
-                    fourier_pair = qubit_list[1]
-                    pair_index = i+1
-                    
-                    #if first step:
-                    if i==0:    
-                        qc.append(gates['ry'], [fourier_pair[0]])
-                        qc.append(gates['ch'], [fourier_pair[0], fourier_pair[1]])
-                        qc.append(gates['x'], [fourier_pair[0]])
-                        pair_index = 0
-                    
-                    pair = qubit_list[pair_index]
-                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
-                    if pair_index < 2:
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[0], noisy=noisy)
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[1], noisy=noisy)
-                    else:
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[1], noisy=noisy)
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[0], noisy=noisy)
-                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
-                                          
-        #last column from top to bottom, last plaquette excluded       
-        x = self.Lx - 1
-        for y in range(self.Ly - 1, 0, -1):
-            link_list = self.plaquette((x,y), from_zero = True)
-            qubit_list = self.qubits_from_links(link_list)
-            fourier_pair = qubit_list[0]
+        gates = self._gates(noisy)
+        qubit_pair = self._qubits_from_link(link)
+        qc.append(gates['ry'], [qubit_pair[0]])
+        qc.append(gates['ch'], [qubit_pair[0], qubit_pair[1]])
+        qc.append(gates['x'], [qubit_pair[0]])
+        
+    def _CU(self, control_link, target_link, inverse, qc = None, noisy = True):
+        """Z3 entanglement operation between two links"""
+        if qc is None:
+            qc = self.circuit
+        gates = self._gates(noisy)
+        control_qubits = self._qubits_from_link(control_link)
+        target_qubits = self._qubits_from_link(target_link)
+        
+        if inverse == False:
+            # If control is 10, CNOT target[1]->target[0]
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[1], target_qubits[0]])
+            # If control is not 00, CNOT target[0]->target[1]
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[0], target_qubits[1]])
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            # Sum control and target
+            qc.append(gates['ccx'], [control_qubits[1], target_qubits[1], target_qubits[0]])
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])
+        else:
+            # Everything in reverse order
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])
+            qc.append(gates['ccx'], [control_qubits[1], target_qubits[1], target_qubits[0]])
             
-            #fourier transform the lower link
-            qc.append(gates['ry'], [fourier_pair[0]])
-            qc.append(gates['ch'], [fourier_pair[0], fourier_pair[1]])
-            qc.append(gates['x'], [fourier_pair[0]])
-
-            for pair_index, pair in enumerate(qubit_list):
-                if pair_index > 0:
-                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
-                    if pair_index < 2:
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[0], noisy=noisy)
-                        self.Z(pair, power = 1, control_qubit = fourier_pair[1], noisy=noisy)
-                    else:
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[1], noisy=noisy)
-                        self.Z(pair, power = 2, control_qubit = fourier_pair[0], noisy=noisy)
-                    qc.append(gates['cx'], [fourier_pair[0], fourier_pair[1]])
-        return
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[0], target_qubits[1]])
+            qc.append(gates['cx'], [control_qubits[1], control_qubits[0]])
+            qc.append(gates['ccx'], [control_qubits[0], target_qubits[1], target_qubits[0]])
+            
+        # OLD CU
+        """
+        qc.append(gates['cx'], [control_qubits[0], control_qubits[1]])
+        if inverse == False:
+            self._Z(target_link, power = 1, control_qubit = control_qubits[0], noisy=noisy)
+            self._Z(target_link, power = 1, control_qubit = control_qubits[1], noisy=noisy)
+        else:
+            self._Z(target_link, power = 2, control_qubit = control_qubits[1], noisy=noisy)
+            self._Z(target_link, power = 2, control_qubit = control_qubits[0], noisy=noisy)
+        qc.append(gates['cx'], [control_qubits[0], control_qubits[1]])
+       """
                 
                 
 class Z4(ToricCode):
     
-    def __init__(self, size, pbc, N_ancillas):
-        ToricCode.__init__(self, size, pbc, 4, N_ancillas)
+    def __init__(self, size, pbc, N_ancillas = 0, backend = None):
+        super().__init__(size, pbc, 4, N_ancillas, backend)
+        N_qubits = 2*self.nlinks + self.N_ancillas
+        N_clbits = self.N_ancillas
+        if backend is None:
+            self.N_qubits = N_qubits
+            self.N_clbits = N_clbits
+        else:
+            N_qubits_backend = backend.configuration().n_qubits
+            if N_qubits_backend < N_qubits:
+                raise RuntimeError('Number of qubits required exceeds available on given backend')
+            else:
+                self.N_qubits = N_qubits_backend
+                self.N_clbits = N_qubits_backend
+        self.circuit = QuantumCircuit(self.N_qubits, self.N_clbits)
+        self.reg_list = [(2*self.nlinks + i) for i in range(N_ancillas)]
         
-    def Z(self, qubit_pair, power = 1, control_qubit = -1, qc = None, noisy = True):
+        
+    def _Z(self, link, power = 1, control_qubit = -1, qc = None, noisy = True):
         if power%4 == 0:
             return
         if qc is None:
             qc = self.circuit
-        gates = self.gates(noisy)
+        gates = self._gates(noisy)
+        qubit_pair = self._qubits_from_link(link)
         if control_qubit == -1:        
             if power%4 == 2:                #Z^2 
                 qc.append(gates['x'], [qubit_pair[0]])
             elif power%4 == 1:              #Z
-                qc.append(gates['x'], [qubit_pair[1]])
-                qc.append(gates['x'], [qubit_pair[0]])
                 qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['x'], [qubit_pair[1]])
+                
             elif power%4 == 3:              #Zdag
-                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
-                qc.append(gates['x'], [qubit_pair[0]])
                 qc.append(gates['x'], [qubit_pair[1]])
+                qc.append(gates['cx'], [qubit_pair[1], qubit_pair[0]])
+                
         else:                             #same as above, but all operations are controlled
             if power%4 == 2:                #Z^2 
                 qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
             elif power%4 == 1:              #Z
-                qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
-                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
                 qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
+                qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
+                
             elif power%4 == 3:              #Zdag
-                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
-                qc.append(gates['cx'], [control_qubit, qubit_pair[0]])
                 qc.append(gates['cx'], [control_qubit, qubit_pair[1]])
+                qc.append(gates['ccx'], [control_qubit, qubit_pair[1], qubit_pair[0]])
+                
         
-    def X(self, qubit_pair, power = 1, control_qubit = -1, qc = None):
+    def _X(self, link, power = 1, control_qubit = -1, qc = None, noisy = True):
+        #NOISELESS OPTION HAS YET TO BE IMPLEMENTED
         if power%4 == 0:
             return
         if qc is None:
             qc = self.circuit
+        qubit_pair = self._qubits_from_link(link)
         if control_qubit == -1:        
             if power%4 == 2:                #X^2 
                 qc.z(qubit_pair[1])
@@ -340,148 +457,90 @@ class Z4(ToricCode):
                 qc.cz(control_qubit, qubit_pair[0])
                 qc.cp(-pi/2, control_qubit, qubit_pair[1])
                 
-                
-    def MagneticGS(self, qc = None, noisy = True):
+    def _elecToMagnGS(self, link, qc = None, noisy = True):
+        """Convert link from electric GS to magnetic GS"""
         if qc is None:
             qc = self.circuit
-        gates = self.gates(noisy)
+        gates = self._gates(noisy)
+        qubit_pair = self._qubits_from_link(link)
+        qc.append(gates['h'], [qubit_pair[0]])
+        qc.append(gates['h'], [qubit_pair[1]])
         
-        #all rows in parallel, three steps, sequential in the columns
-        for x in range(self.Lx - 1):
-            for i in range(3):
-                #three iterations to perform in parallel these steps on each column but the last
-                #i=0: hadamard the right link and act on right->bottom links
-                #i=1: act on right->top links
-                #i=2: act on right->left links (this is the only step that must
-                #be done sequentially in the columns)
-                for y in range(self.Ly):
-                    link_list = self.plaquette((x,y), from_zero = True)
-                    qubit_list = self.qubits_from_links(link_list)
-                    fourier_pair = qubit_list[1]
-                    pair_index = i+1
-                    
-                    #if first step:
-                    if i==0:    
-                        qc.append(gates['h'], [fourier_pair[0]])
-                        qc.append(gates['h'], [fourier_pair[1]])
-                        #qc.h(fourier_pair[0])
-                        #qc.h(fourier_pair[1])
-                        pair_index = 0
-                    
-                    pair = qubit_list[pair_index]
-                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
-                    qc.append(gates['ccx'], [pair[1], fourier_pair[1], pair[0]]) #CCX(4,2,3)
-                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
-                    qc.append(gates['cx'], [fourier_pair[0], pair[0]])      #CX(1,3)
-                    qc.append(gates['cx'], [fourier_pair[1], pair[1]])      #CX(2,4)
-                    """
-                    if pair_index > 1: qc.x(pair[1])      #X(4) if up or left link
-                    qc.ccx(pair[1], fourier_pair[1], pair[0]) #CCX(4,2,3)
-                    if pair_index > 1: qc.x(pair[1])      #X(4) if up or left link
-                    qc.cx(fourier_pair[0], pair[0])      #CX(1,3)
-                    qc.cx(fourier_pair[1], pair[1])      #CX(2,4)
-                    """
-                                          
-        #last column from top to bottom, last plaquette excluded       
-        x = self.Lx - 1
-        for y in range(self.Ly - 1, 0, -1):
-            link_list = self.plaquette((x,y), from_zero = True)
-            qubit_list = self.qubits_from_links(link_list)
-            
-            #fourier transform the lower link
-            fourier_pair = qubit_list[0]
-            qc.append(gates['h'], [fourier_pair[0]])
-            qc.append(gates['h'], [fourier_pair[1]])
-            
-            for pair_index, pair in enumerate(qubit_list):
-                if pair_index > 0:
-                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
-                    qc.append(gates['ccx'], [pair[1], fourier_pair[1], pair[0]]) #CCX(4,2,3)
-                    if pair_index > 1: qc.append(gates['x'], [pair[1]])      #X(4) if up or left link
-                    qc.append(gates['cx'], [fourier_pair[0], pair[0]])   #CX(1,3)
-                    qc.append(gates['cx'], [fourier_pair[1], pair[1]])   #CX(2,4)
-        return
+        
+    def _CU(self, control_link, target_link, inverse, qc = None, noisy = True):
+        """Z4 entanglement operation between two links"""
+        if qc is None:
+            qc = self.circuit
+        gates = self._gates(noisy)
+        control_qubits = self._qubits_from_link(control_link)
+        target_qubits = self._qubits_from_link(target_link)
+        
+        if inverse == False:  
+            # CCX(2,4,3)    CARRY
+            qc.append(gates['ccx'], [control_qubits[1], target_qubits[1], target_qubits[0]])        
+            # CX(1,3) and #CX(2,4)  XOR
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])      
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])      
+        else:
+            # XOR
+            qc.append(gates['cx'], [control_qubits[0], target_qubits[0]])   
+            qc.append(gates['cx'], [control_qubits[1], target_qubits[1]])
+            # CARRY
+            qc.append(gates['ccx'], [target_qubits[1], control_qubits[1], target_qubits[0]])  
 
 
 class Z2(ToricCode):
     
-    def __init__(self, size, pbc, N_ancillas):
-        Lattice.__init__(self, size, pbc, spl = 2)
-        self.N_ancillas = N_ancillas
-        self.N_qubits = self.nlinks + self.N_ancillas
-        self.circuit = QuantumCircuit(self.N_qubits, N_ancillas)
-    
-    def qubits_from_links(self, link_list):
-        qubit_list = [link for link in link_list]
-        return qubit_list
+    def __init__(self, size, pbc, N_ancillas = 0, backend = None):
+        super().__init__(size, pbc, 2, N_ancillas, backend)
+        N_qubits = self.nlinks + self.N_ancillas
+        N_clbits = self.N_ancillas
+        if backend is None:
+            self.N_qubits = N_qubits
+            self.N_clbits = N_clbits
+        else:
+            N_qubits_backend = backend.configuration().n_qubits
+            if N_qubits_backend < N_qubits:
+                raise RuntimeError('Number of qubits required exceeds available on given backend')
+            else:
+                self.N_qubits = N_qubits_backend
+                self.N_clbits = N_qubits_backend
+        self.circuit = QuantumCircuit(self.N_qubits, self.N_clbits)
+        self.reg_list = [(self.nlinks + i) for i in range(N_ancillas)]
         
-    def Z(self, qubit, power=1, control_qubit = -1, qc = None, noisy = True):
+        
+    def _Z(self, link, power=1, control_qubit = -1, qc = None, noisy = True):
         if power%2==0:
             return
         if qc is None:
             qc = self.circuit
         if control_qubit == -1:        
-            qc.x(qubit)
+            qc.x(link)
         else:                             
-            qc.cx(control_qubit, qubit)
+            qc.cx(control_qubit, link)
            
-    def X(self, qubit, power=1, control_qubit = -1, qc = None, noisy = True):
+    def _X(self, link, power=1, control_qubit = -1, qc = None, noisy = True):
         if power%2==0:
             return
         if qc is None:
             qc = self.circuit
         if control_qubit == -1:        
-            qc.z(qubit)
+            qc.z(link)
         else:                             
-            qc.cz(control_qubit, qubit)
-                
-                
-    def MagneticGS(self, qc = None, noisy = True):
+            qc.cz(control_qubit, link)
+            
+    def _elecToMagnGS(self, link, qc = None, noisy = True):
+        """Convert link from electric GS to magnetic GS"""
         if qc is None:
             qc = self.circuit
-        h_label = cx_label = None
-        if noisy is False:
-            h_label = 'H_nl'
-            cx_label = 'nl'
-        h = ext.HGate(h_label)
-        cx = ext.CXGate(cx_label)
-            
-        #all rows in parallel, three steps, sequential in the columns
-        for x in range(self.Lx - 1):
-            for i in range(3):
-                #three iterations to perform in parallel these steps on each column but the last
-                #i=0: hadamard the right link and act on right->bottom links
-                #i=1: act on right->top links
-                #i=2: act on right->left links (this is the only step that must
-                #be done sequentially in the columns)
-                for y in range(self.Ly):
-                    link_list = self.plaquette((x,y), from_zero = True)
-                    qubit_list = self.qubits_from_links(link_list)
-                    fourier_qubit = qubit_list[1]
-                    target_index = i+1
-                    
-                    #if first step:
-                    if i==0:    
-                        qc.append(h, [fourier_qubit])
-                        #qc.h(fourier_qubit)                  
-                        target_index = 0
-                    
-                    target_qubit = qubit_list[target_index]
-                    qc.append(cx, [fourier_qubit, target_qubit])
-                    #qc.cx(fourier_qubit, target_qubit)      #CX(1,2)
-                                          
-        #last column from top to bottom, last plaquette excluded       
-        x = self.Lx - 1
-        for y in range(self.Ly - 1, 0, -1):
-            link_list = self.plaquette((x,y), from_zero = True)
-            qubit_list = self.qubits_from_links(link_list)
-            
-            #fourier transform the lower link
-            fourier_qubit = qubit_list[0]
-            qc.append(h, [fourier_qubit])
-            #qc.h(fourier_qubit)
-            
-            for target_index, target_qubit in enumerate(qubit_list):
-                if target_index > 0:
-                    qc.append(cx, [fourier_qubit, target_qubit])
-                    #qc.cx(fourier_qubit, target_qubit)   #CX(1,2)
+        gates = self._gates(noisy)
+        qc.append(gates['h'], [link])
+    
+    def _CU(self, control_link, target_link, inverse, qc = None, noisy = True):
+        """Z4 entanglement operation between two links"""
+        if qc is None:
+            qc = self.circuit
+        gates = self._gates(noisy)
+        # CX(1,2)
+        qc.append(gates['cx'], [control_link, target_link])
+                
