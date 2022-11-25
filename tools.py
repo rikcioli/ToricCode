@@ -64,7 +64,7 @@ def show_results(result):
     plt.show()
     
 
-def build_noise(dep1 = 5.969e-4, dep2 = 0.01, T1 = 100e3, T2 = 100e3):
+def build_noise(dep1 = 5.969e-4, dep2 = 0.02, T1 = 100e3, T2 = 100e3):
     # Error probabilities
     prob_1 = dep1  # 1-qubit gate
     prob_2 = dep2   # 2-qubit gate
@@ -77,7 +77,7 @@ def build_noise(dep1 = 5.969e-4, dep2 = 0.01, T1 = 100e3, T2 = 100e3):
     
     # Add errors to noise model
     noise_model = noise.NoiseModel()
-    noise_model.add_all_qubit_quantum_error(dep_ccx, ['ccx'])
+    #noise_model.add_all_qubit_quantum_error(dep_ccx, ['ccx'])
     if (T1 != 0) or (T2 != 0):
         therm_gate = noise.thermal_relaxation_error(T1, T2, 25)   #exact
         therm_cx = noise.thermal_relaxation_error(T1, T2, 317.8).expand(
@@ -93,7 +93,7 @@ def build_noise(dep1 = 5.969e-4, dep2 = 0.01, T1 = 100e3, T2 = 100e3):
         noise_model.add_all_qubit_quantum_error(dep_cx, ['cx', 'cp'])
     
     return noise_model
-    
+
 
 def save_state(state, path = 'C:/Users/rikci/.spyder-py3/TESI/states/', name = 'Z4_3bit'):
     #DEPRECATED, WE USE SCIPY SPARSE INSTEAD

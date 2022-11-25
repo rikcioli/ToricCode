@@ -7,7 +7,6 @@ Created on Fri Apr 29 18:31:08 2022
 
 import ToricCode as tc
 import tools as ts
-import numpy as np
 from qiskit import transpile, IBMQ
 from qiskit.providers.aer import AerSimulator
 import qiskit.providers.aer.noise as noise
@@ -16,19 +15,14 @@ from qiskit.tools import job_monitor
 from IPython.display import display
 
 
-"""
-IBMQ.load_account()
-provider = IBMQ.get_provider(hub='ibm-q')
-backend = provider.get_backend('ibm_nairobi')
-"""
-#IBMQ.enable_account('267761afd846893dec77bf06dc487d6c7b9569ed20605f88fbddf79e6fb4d149dcfb04da0e4c78994302537adbb9da62c7cfc1d5341f9d4a4c8b416a953bbc9b')
+#IBMQ.load_account()
 provider = IBMQ.get_provider(hub='ibm-q-cern')
 backend = provider.get_backend('ibm_cairo')
 noise_model = noise.NoiseModel.from_backend(backend)
 simulator = AerSimulator(method = "statevector")
 
 # Initialize toric code and registers
-N_reg = 3
+N_reg = 2
 test = tc.Z4((3,2), (False, False), N_reg)
 test.MagneticGS_2()
 ancilla = test.N_qubits-test.N_ancillas
@@ -57,8 +51,8 @@ for i in range(N_reg):
 
 test.circuit.append(QFT(N_reg, inverse=True), [test.circuit.qubits[reg] for reg in reg_list])
 test.circuit.measure(reg_list, [i for i in range(N_reg)])
-
 display(test.circuit.draw('mpl'))
+
 
 # Transpile the circuit multiple times for stochastic swap
 qc_list = [test.circuit.copy() for i in range(200)]
@@ -69,7 +63,6 @@ tqc_list = transpile(qc_list,
 
 # Find best circuit, by first removing the circuits that use faulty qubits and
 # then choosing the one with smallest depth
-
 
 # Check faulty cnots (the ones with error probability 1)
 props = backend.properties()
@@ -110,7 +103,7 @@ print("Transpiled circuit width:", tqc.width())
 # Run circuit on simulator/backend and get results
 N_shots = 1000
 job = simulator.run(tqc, job_name = "Toric Test", shots = N_shots, 
-                    noise_model = ts.build_noise()
+                    noise_model = noise_model
                     )
 job_monitor(job)
 result = job.result()

@@ -81,7 +81,6 @@ def runSave(tqc, final_perm = None, filename = None, **kwargs):
     return state
 
 
-#IBMQ.enable_account('267761afd846893dec77bf06dc487d6c7b9569ed20605f88fbddf79e6fb4d149dcfb04da0e4c78994302537adbb9da62c7cfc1d5341f9d4a4c8b416a953bbc9b')
 #IBMQ.load_account()
 provider = IBMQ.get_provider(hub='ibm-q-cern')
 backend = provider.get_backend('ibm_cairo')
@@ -89,7 +88,7 @@ noise_model = noise.NoiseModel.from_backend(backend)
 simulator = AerSimulator(method = 'statevector')
 
 # Initialize toric code and registers s.t. number of qubits matches with backend
-test = tc.Z3((3,2), (False, False), backend = backend)
+test = tc.Z4((3,2), (False, False), backend = backend)
 test.MagneticGS_2()
 display(test.circuit.draw('mpl'))
 
@@ -110,11 +109,31 @@ display(qc.draw('mpl'))
 test.circuit.measure([i for i in range(test.N_qubits)], [i for i in range(test.N_qubits)])
 
 # Transpile the circuit multiple times for stochastic swap
-qc_list = [test.circuit.copy() for i in range(50)]
+qc_list = [test.circuit.copy() for i in range(200)]
 tqc_list = transpile(qc_list, 
                      backend, 
                      optimization_level=3,
                      )
+
+# Check faulty cnots (the ones with error probability 1)
+props = backend.properties()
+cnots = [gate for gate in props.to_dict()['gates'] if gate['gate'] == 'cx']
+faulty_cnots = [cnot for cnot in cnots if cnot['parameters'][0]['value'] == 1]
+faulty_cnots_qubits = [faulty_cnots[i]['qubits'] for i in range(len(faulty_cnots))]
+
+# Remove circuits that use faulty cnots
+clean_tqc_list = []
+for tqc in tqc_list:
+    faulty = False
+    cnots = [instruction for instruction in tqc.data 
+             if instruction[0].name == 'cx']
+    for op, qubits, clbits in cnots:
+        pair = [qubits[0].index, qubits[1].index]
+        if pair in faulty_cnots_qubits:
+            faulty = True
+            break
+    if faulty == False: clean_tqc_list.append(tqc)
+tqc_list = clean_tqc_list
 
 # Find best circuit
 depths = [tqc.depth() for tqc in tqc_list]
@@ -145,18 +164,19 @@ print("Transpiled circuit width:", tqc.width())
 # Run GS circuit on ideal simulator, extract statevector as sparse array and save it
 state_ideal = runSave(tqc,
                       final_perm,
-                      filename = 'C:/Users/rikci/.spyder-py3/TESI/SciPy States/test/ideal',
+                      filename = 'D:/Fisica/TESI/SciPy States/Z4 2 plaq/CairoOptimal/ideal',
                       shots = 1)
 
 #Run GS circuit copy on noisy simulator and measure average fidelity
 N_states_noisy = 1000
 states = [runSave(tqc, 
                   final_perm, 
-                  filename = 'C:/Users/rikci/.spyder-py3/TESI/SciPy States/test/'+str(i+1), 
+                  filename = 'D:/Fisica/TESI/SciPy States/Z4 2 plaq/CairoOptimal/'+str(i+1), 
                   shots = 1,
-                  #noise_model = ts.build_noise()
+                  noise_model = noise_model
                   ) for i in range(N_states_noisy)]
 
-fidelity = ts.evaluateFidelity(states, state_ideal)
+fid, err = ts.fidelityError(states, state_ideal, 10)
+print("\nFidelity with exact state is:", fid, "pm", err)
 
-print("Fidelity with exact state is:", fidelity)
+

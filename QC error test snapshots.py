@@ -63,14 +63,13 @@ def swapState(state, assign_list):
     assign_list."""
     permutations = findPerm(assign_list)
     swaps = permToSwap(permutations)
-    state_sparse = sy.coo_matrix(state)
+    state_sparse = sp.coo_matrix(state)
     for index in range(state_sparse.nnz): 
         for swap in swaps:
             state_sparse.col[index] = swapBits(state_sparse.col[index], swap[0], swap[1])
     ordered_state = state_sparse.toarray()
     return ordered_state
 
-#IBMQ.enable_account('267761afd846893dec77bf06dc487d6c7b9569ed20605f88fbddf79e6fb4d149dcfb04da0e4c78994302537adbb9da62c7cfc1d5341f9d4a4c8b416a953bbc9b')
 IBMQ.load_account() # Load account from disk
 #provider = IBMQ.get_provider(hub='ibm-q-cern')
 #backend = provider.get_backend('ibm_cairo')
@@ -106,26 +105,61 @@ qc.measure([0,1,2,3], [0,1,2,3])
 """
 #Z3 GS Init test
 
-qc = QuantumCircuit(5, 5)
+qc = QuantumCircuit(4, 4)
 
 theta = 2*np.arccos(1/np.sqrt(3))
+
+controls = [3,2]
+targets = [1,0]
 """
 #fourier right
-qc.ry(theta, 2)
-qc.ch(2, 3)
-qc.x(2)
+qc.ry(theta, controls[0])
+qc.ch(controls[0], controls[1])
+qc.x(controls[0])
 qc.barrier()
-
-#ground state down
+"""
+#ground state up
+"""
 qc.cx(2, 3)
-qc.cx(2, 0)
-qc.ccx(2, 0, 1)
+
 qc.ccx(2, 1, 0)
-qc.cx(3, 0)
-qc.ccx(3, 0, 1)
+qc.ccx(2, 0, 1)
+qc.cx(2, 0)
+
 qc.ccx(3, 1, 0)
+qc.ccx(3, 0, 1)
+qc.cx(3, 0)
+
 qc.cx(2, 3)
 """
+
+#new ground state down
+qc.x(targets[1])
+qc.x(controls[1])
+
+qc.ccx(controls[0], targets[1], targets[0])
+qc.cx(controls[1], controls[0])
+qc.ccx(controls[0], targets[0], targets[1])
+qc.cx(controls[1], controls[0])
+
+qc.ccx(controls[1], targets[1], targets[0])
+qc.cx(controls[1], targets[1])
+qc.cx(controls[0], targets[0])
+
+
+"""
+#new ground state up
+qc.cx(controls[0], targets[0])
+qc.cx(controls[1], targets[1])
+qc.ccx(controls[1], targets[1], targets[0])
+
+qc.cx(controls[1], controls[0])
+qc.ccx(controls[0], targets[0], targets[1])
+qc.ccx(controls[0], targets[1], targets[0])
+qc.cx(controls[1], controls[0])
+"""
+
+
 """
 #Z on both
 qc.x(0)
@@ -136,20 +170,10 @@ qc.cx(2,3)
 qc.cx(3,2)
 """
 
-qc.x(0)
-qc.x(2)
-qc.h(3)
-qc.h(4)
-qc.z(4)
-qc.ccx(0, 2, 4)
-qc.ccx(2,1,0)
-qc.ccx(3,4,1)
+display(plot_state_hinton(qc))
 
-
+"""
 qctrue = qc.copy()
-
-#display(plot_state_hinton(qc))
-
 initial_layout = [1,2,3,4,0]
 
 # Transpile the circuit multiple times for stochastic swap
@@ -208,3 +232,4 @@ unpermuted_snap = unpermuted_sparse.toarray()[0]
 print("Reordered backend ", unpermuted_snap)
 print("Fidelity backend and True ", np.abs(np.dot(snap.conjugate(), snaptrue)))
 print("Fidelity reordered backend and True ", np.abs(np.dot(unpermuted_snap.conjugate(), snaptrue)))
+"""
